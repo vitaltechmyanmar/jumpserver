@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 #
+from django.db.models import Prefetch
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
@@ -7,7 +8,7 @@ from common.serializers.fields import LabeledChoiceField, ObjectRelatedField
 from orgs.mixins.serializers import OrgResourceModelSerializerMixin
 from orgs.models import Organization
 from tickets.const import TicketType, TicketStatus, TicketState
-from tickets.models import Ticket, TicketFlow
+from tickets.models import Ticket, TicketAssignee, TicketFlow
 from users.models import User
 
 __all__ = [
@@ -17,8 +18,19 @@ __all__ = [
 
 class TicketSerializer(OrgResourceModelSerializerMixin):
     type = LabeledChoiceField(choices=TicketType.choices, read_only=True, label=_('Type'))
-    status = LabeledChoiceField(choices=TicketStatus.choices, read_only=True, label=_('Status'))
-    state = LabeledChoiceField(choices=TicketState.choices, read_only=True, label=_("State"))
+    status = LabeledChoiceField(
+        choices=TicketStatus.choices, read_only=True,
+        label=_('Ticket status'),
+        help_text=_('Indicates whether the ticket is open or finished')
+    )
+    state = LabeledChoiceField(
+        choices=TicketState.choices, read_only=True,
+        label=_('Approval result'),
+        help_text=_(
+            'Indicates the current approval outcome: pending, closed, '
+            'approved, or rejected'
+        )
+    )
     process_map = serializers.JSONField(read_only=True, default=list, label=_('Process map'))
     cc_users = ObjectRelatedField(
         many=True, read_only=True, attrs=('id', 'name', 'username'), label=_('CC users')
@@ -54,8 +66,14 @@ class TicketSerializer(OrgResourceModelSerializerMixin):
 
     @classmethod
     def setup_eager_loading(cls, queryset):
-        queryset = queryset.prefetch_related('ticket_steps')
-        return queryset
+        ticket_assignees = TicketAssignee.objects.select_related('assignee')
+        return queryset.select_related('applicant', 'flow').prefetch_related(
+            Prefetch(
+                'ticket_steps__ticket_assignees',
+                queryset=ticket_assignees,
+            ),
+            'cc_users',
+        )
 
 
 class TicketApproveSerializer(TicketSerializer):
